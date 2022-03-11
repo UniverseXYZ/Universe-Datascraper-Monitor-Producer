@@ -40,3 +40,4 @@ It sends the new block that never read before to the queue.
 
 This consumer leverage the following data collection in [schema](https://github.com/plugblockchain/Universe-Datascraper-Schema)
 - Block Tasks
+
