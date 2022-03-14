@@ -42,17 +42,20 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
    * #3. save tasks to DB
    * #4. mark collection as processed
    */
-  @Cron(CronExpression.EVERY_5_SECONDS)
+  @Cron(CronExpression.EVERY_10_SECONDS)
   public async checkCollection() {
     // Check if there is any unprocessed collection
     const currentBlock = await this.ethereumService.getBlockNum();
     const blockDelay = parseInt(this.configService.get('blockDelay'));
-    let lastBlock;
-    lastBlock = await this.nftBlockMonitorService.getLatestOne();
+    const lastBlock = await this.nftBlockMonitorService.getLatestOne();
 
     if (!lastBlock) {
       this.nextBlock = parseInt(this.configService.get('default_start_block'));
-      this.logger.log(`${'[Block Monitor Producer]'} Havent started yet, will be start with the default block number: ${this.nextBlock}`);
+      this.logger.log(
+        `${'[Block Monitor Producer]'} Havent started yet, will be start with the default block number: ${
+          this.nextBlock
+        }`,
+      );
       await this.nftBlockMonitorService.insertLatestOne(this.nextBlock);
     } else {
       // TODO: check if we should use BigNumber here
@@ -61,7 +64,9 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
 
     if (this.nextBlock > currentBlock - blockDelay) {
       this.logger.log(
-          `${'[Block Monitor Producer]'} Skip attempt to process block: ${this.nextBlock} which exceeds current confirmed block: ${currentBlock-blockDelay}`,
+        `${'[Block Monitor Producer]'} Skip attempt to process block: ${
+          this.nextBlock
+        } which exceeds current confirmed block: ${currentBlock - blockDelay}`,
       );
       return;
     }
@@ -77,14 +82,13 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
     };
     await this.sendMessage(message);
     this.logger.log(
-      `${
-        '[Block Monitor Producer]'
-      } Successfully sent block num: ${this.nextBlock}`,
+      `${'[Block Monitor Producer]'} Successfully sent block num: ${
+        this.nextBlock
+      }`,
     );
 
     // Increase the record
     await this.nftBlockMonitorService.updateLatestOne(this.nextBlock);
-
   }
 
   async sendMessage<T = any>(payload: Message<T> | Message<T>[]) {
