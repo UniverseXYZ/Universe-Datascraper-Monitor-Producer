@@ -46,6 +46,7 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
   public async checkCollection() {
     // Check if there is any unprocessed collection
     const currentBlock = await this.ethereumService.getBlockNum();
+    const blockDelay = parseInt(this.configService.get('blockDelay'));
     let lastBlock;
     lastBlock = await this.nftBlockMonitorService.getLatestOne();
 
@@ -58,9 +59,9 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
       this.nextBlock = lastBlock.blockNum + 1;
     }
 
-    if (this.nextBlock > currentBlock) {
+    if (this.nextBlock > currentBlock - blockDelay) {
       this.logger.log(
-          `${'[Block Monitor Producer]'} Skip this round as we are processing block: ${this.nextBlock} which exceed current block: ${currentBlock}`,
+          `${'[Block Monitor Producer]'} Skip attempt to process block: ${this.nextBlock} which exceeds current confirmed block: ${currentBlock-blockDelay}`,
       );
       return;
     }
