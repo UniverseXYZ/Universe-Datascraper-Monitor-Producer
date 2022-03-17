@@ -91,6 +91,40 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
     await this.nftBlockMonitorService.updateLatestOne(this.nextBlock);
   }
 
+  /**
+   * #1. check if there is any task need to be retry
+   * #2. send to queue
+   * #3. delete
+   */
+  @Cron(CronExpression.EVERY_10_SECONDS)
+  public async checkCollectionTask() {
+    // get retry task
+    const retryBlock = await this.nftBlockMonitorService.getRetryBlock();
+    if (!retryBlock) {
+      return;
+    }
+    this.logger.log(
+      `[Monitor Retry] Find one retry task: ${retryBlock.blockNum}`,
+    );
+
+    // Prepare queue messages
+    const message: Message<QueueMessageBody> = {
+      id: retryBlock.blockNum.toString(),
+      body: {
+        blockNum: retryBlock.blockNum,
+      },
+      groupId: retryBlock.blockNum.toString(),
+      deduplicationId: retryBlock.blockNum.toString(),
+    };
+    await this.sendMessage(message);
+    this.logger.log(
+      `[Monitor Retry] Successfully sent block num: ${retryBlock.blockNum}`,
+    );
+
+    // delete this retry task
+    await this.nftBlockMonitorService.deleteOne(retryBlock.messageId);
+  }
+
   async sendMessage<T = any>(payload: Message<T> | Message<T>[]) {
     const originalMessages = Array.isArray(payload) ? payload : [payload];
     const messages = originalMessages.map((message) => {

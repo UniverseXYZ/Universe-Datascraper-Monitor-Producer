@@ -35,4 +35,14 @@ export class NFTBlockMonitorTaskService {
       messageId: this.CURRENT_MONITOR_BLOCK,
     });
   }
+
+  async getRetryBlock() {
+    return await this.nftBlockMonitorTaskModel.findOne({
+      status: 'retry',
+    });
+  }
+
+  public async deleteOne(messageId: string) {
+    await this.nftBlockMonitorTaskModel.deleteOne({ messageId });
+  }
 }
