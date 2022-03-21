@@ -42,53 +42,56 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
    * #3. save tasks to DB
    * #4. mark collection as processed
    */
-  @Cron('*/5 * * * * *')
+  @Cron('*/1 * * * * *')
   public async checkCollection() {
     // Check if there is any unprocessed collection
     const currentBlock = await this.ethereumService.getBlockNum();
     const blockDelay = parseInt(this.configService.get('blockDelay'));
-    const lastBlock = await this.nftBlockMonitorService.getLatestOne();
 
-    if (!lastBlock) {
-      this.nextBlock = parseInt(this.configService.get('default_start_block'));
+    for(let i = 0; i < 10; i++) {
+      const lastBlock = await this.nftBlockMonitorService.getLatestOne();
+
+      if (!lastBlock) {
+        this.nextBlock = parseInt(this.configService.get('default_start_block'));
+        this.logger.log(
+          `${'[Block Monitor Producer]'} Havent started yet, will be start with the default block number: ${
+            this.nextBlock
+          }`,
+        );
+        await this.nftBlockMonitorService.insertLatestOne(this.nextBlock);
+      } else {
+        // TODO: check if we should use BigNumber here
+        this.nextBlock = lastBlock.blockNum + 1;
+      }
+
+      if (this.nextBlock > currentBlock - blockDelay) {
+        this.logger.log(
+          `${'[Block Monitor Producer]'} Skip attempt to process block: ${
+            this.nextBlock
+          } which exceeds current confirmed block: ${currentBlock - blockDelay}`,
+        );
+        return;
+      }
+
+      // Prepare queue messages
+      const message: Message<QueueMessageBody> = {
+        id: this.nextBlock.toString(),
+        body: {
+          blockNum: this.nextBlock,
+        },
+        groupId: this.nextBlock.toString(),
+        deduplicationId: this.nextBlock.toString(),
+      };
+      await this.sendMessage(message);
       this.logger.log(
-        `${'[Block Monitor Producer]'} Havent started yet, will be start with the default block number: ${
+        `${'[Block Monitor Producer]'} Successfully sent block num: ${
           this.nextBlock
         }`,
       );
-      await this.nftBlockMonitorService.insertLatestOne(this.nextBlock);
-    } else {
-      // TODO: check if we should use BigNumber here
-      this.nextBlock = lastBlock.blockNum + 1;
+
+      // Increase the record
+      await this.nftBlockMonitorService.updateLatestOne(this.nextBlock);
     }
-
-    if (this.nextBlock > currentBlock - blockDelay) {
-      this.logger.log(
-        `${'[Block Monitor Producer]'} Skip attempt to process block: ${
-          this.nextBlock
-        } which exceeds current confirmed block: ${currentBlock - blockDelay}`,
-      );
-      return;
-    }
-
-    // Prepare queue messages
-    const message: Message<QueueMessageBody> = {
-      id: this.nextBlock.toString(),
-      body: {
-        blockNum: this.nextBlock,
-      },
-      groupId: this.nextBlock.toString(),
-      deduplicationId: this.nextBlock.toString(),
-    };
-    await this.sendMessage(message);
-    this.logger.log(
-      `${'[Block Monitor Producer]'} Successfully sent block num: ${
-        this.nextBlock
-      }`,
-    );
-
-    // Increase the record
-    await this.nftBlockMonitorService.updateLatestOne(this.nextBlock);
   }
 
   /**
