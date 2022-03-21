@@ -42,13 +42,13 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
    * #3. save tasks to DB
    * #4. mark collection as processed
    */
-  @Cron('*/1 * * * * *')
+  @Cron('*/10 * * * * *')
   public async checkCollection() {
     // Check if there is any unprocessed collection
     const currentBlock = await this.ethereumService.getBlockNum();
     const blockDelay = parseInt(this.configService.get('blockDelay'));
 
-    for(let i = 0; i < 10; i++) {
+    for(let i = 0; i < 100; i++) {
       const lastBlock = await this.nftBlockMonitorService.getLatestOne();
 
       if (!lastBlock) {
