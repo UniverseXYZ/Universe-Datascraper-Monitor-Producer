@@ -19,4 +19,6 @@ export default () => ({
   },
   etherscan_api_key: process.env.ETHERSCAN_API_KEY,
   default_start_block: process.env.DEFAULT_START_BLOCK,
+  default_end_block: process.env.DEFAULT_END_BLOCK,
+  source: process.env.SOURCE
 });

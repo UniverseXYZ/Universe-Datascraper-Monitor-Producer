@@ -16,16 +16,34 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
   public sqsProducer: Producer;
   private readonly logger = new Logger(SqsProducerService.name);
   nextBlock: number;
+  private source: string;
 
   constructor(
     private configService: ConfigService,
     private readonly nftBlockMonitorService: NFTBlockMonitorTaskService,
     private readonly ethereumService: EthereumService,
   ) {
+    const region = this.configService.get('aws.region');
+    const accessKeyId = this.configService.get('aws.accessKeyId');
+    const secretAccessKey = this.configService.get('aws.secretAccessKey');
+    const source = this.configService.get('source');
+
+    if (!region || !accessKeyId || !secretAccessKey || !source) {
+      throw new Error(
+        'Initialize AWS queue failed, please check required variables',
+      );
+    }
+
+    if (source !== "ARCHIVE" && source !== "MONITOR") {
+      throw new Error(`SOURCE has invalid value(${source})`);
+    }
+
+    this.source = source;
+
     AWS.config.update({
-      region: this.configService.get('aws.region'),
-      accessKeyId: this.configService.get('aws.accessKeyId'),
-      secretAccessKey: this.configService.get('aws.secretAccessKey'),
+      region: region,
+      accessKeyId: accessKeyId,
+      secretAccessKey: secretAccessKey,
     });
   }
 
@@ -42,33 +60,45 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
    * #3. save tasks to DB
    * #4. mark collection as processed
    */
+  // TODO: Upgrade this code in order to support backwards flow
   @Cron('*/10 * * * * *')
-  public async checkCollection() {
+  public async checkBlock() {
     // Check if there is any unprocessed collection
     const currentBlock = await this.ethereumService.getBlockNum();
     const blockDelay = parseInt(this.configService.get('blockDelay'));
 
     for(let i = 0; i < 100; i++) {
-      const lastBlock = await this.nftBlockMonitorService.getLatestOne();
+      const lastBlock = await this.nftBlockMonitorService.getLatestOne(this.source);
 
       if (!lastBlock) {
         this.nextBlock = parseInt(this.configService.get('default_start_block'));
         this.logger.log(
-          `${'[Block Monitor Producer]'} Havent started yet, will be start with the default block number: ${
+          `[Block Monitor Producer - ${this.source}] Havent started yet, will be start with the default block number: ${
             this.nextBlock
           }`,
         );
-        await this.nftBlockMonitorService.insertLatestOne(this.nextBlock);
+        await this.nftBlockMonitorService.insertLatestOne(this.nextBlock, this.source);
       } else {
         // TODO: check if we should use BigNumber here
-        this.nextBlock = lastBlock.blockNum + 1;
+        this.nextBlock = this.source === 'MONITOR' 
+        ? lastBlock.blockNum + 1
+        : lastBlock.blockNum - 1;
       }
 
-      if (this.nextBlock > currentBlock - blockDelay) {
+      if (this.source === "MONITOR" && this.nextBlock > currentBlock - blockDelay) {
         this.logger.log(
-          `${'[Block Monitor Producer]'} Skip attempt to process block: ${
+          `[Block Monitor Producer - ${this.source}] Skip attempt to process block: ${
             this.nextBlock
           } which exceeds current confirmed block: ${currentBlock - blockDelay}`,
+        );
+        return;
+      }
+
+      if (this.source === "MONITOR" && this.nextBlock < this.configService.get('default_end_block')) {
+        this.logger.log(
+          `[Block Monitor Producer - ${this.source}] Skip attempt to process block: ${
+            this.nextBlock
+          } which exceeds the end block: ${this.configService.get('default_end_block')}`,
         );
         return;
       }
@@ -84,13 +114,13 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
       };
       await this.sendMessage(message);
       this.logger.log(
-        `${'[Block Monitor Producer]'} Successfully sent block num: ${
+        `[Block Monitor Producer - ${this.source}] Successfully sent block num: ${
           this.nextBlock
         }`,
       );
 
       // Increase the record
-      await this.nftBlockMonitorService.updateLatestOne(this.nextBlock);
+      await this.nftBlockMonitorService.updateLatestOne(this.nextBlock, this.source);
     }
   }
 
@@ -100,14 +130,14 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
    * #3. delete
    */
   @Cron(CronExpression.EVERY_10_SECONDS)
-  public async checkCollectionTask() {
+  public async checkBlockRetryTask() {
     // get retry task
-    const retryBlock = await this.nftBlockMonitorService.getRetryBlock();
+    const retryBlock = await this.nftBlockMonitorService.getRetryBlock(this.source);
     if (!retryBlock) {
       return;
     }
     this.logger.log(
-      `[Monitor Retry] Find one retry task: ${retryBlock.blockNum}`,
+      `[${this.source} Retry] Find one retry task: ${retryBlock.blockNum}`,
     );
 
     // Prepare queue messages
@@ -121,7 +151,7 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
     };
     await this.sendMessage(message);
     this.logger.log(
-      `[Monitor Retry] Successfully sent block num: ${retryBlock.blockNum}`,
+      `[${this.source} Retry] Successfully sent block num: ${retryBlock.blockNum}`,
     );
 
     // delete this retry task

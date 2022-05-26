@@ -9,35 +9,37 @@ import {
 @Injectable()
 export class NFTBlockMonitorTaskService {
   private readonly CURRENT_MONITOR_BLOCK = 'CURRENT_MONITOR_BLOCK';
+  private readonly CURRENT_ARCHIVE_BLOCK = 'CURRENT_ARCHIVE_BLOCK';
 
   constructor(
     @InjectModel(NFTBlockMonitorTask.name)
     private readonly nftBlockMonitorTaskModel: Model<NFTBlockMonitorTaskDocument>,
   ) {}
 
-  async insertLatestOne(blockNum: number) {
+  async insertLatestOne(blockNum: number, source: string) {
     await this.nftBlockMonitorTaskModel.insertMany({
-      messageId: this.CURRENT_MONITOR_BLOCK,
+      messageId: source === "MONITOR" ? this.CURRENT_MONITOR_BLOCK : this.CURRENT_ARCHIVE_BLOCK,
       blockNum,
       status: 'sent',
     });
   }
 
-  async updateLatestOne(blockNum: number) {
+  async updateLatestOne(blockNum: number, source: string) {
     await this.nftBlockMonitorTaskModel.updateOne(
-      { messageId: this.CURRENT_MONITOR_BLOCK },
+      { messageId: source === "MONITOR" ? this.CURRENT_MONITOR_BLOCK : this.CURRENT_ARCHIVE_BLOCK },
       { blockNum },
     );
   }
 
-  async getLatestOne() {
+  async getLatestOne(source: string) {
     return await this.nftBlockMonitorTaskModel.findOne({
-      messageId: this.CURRENT_MONITOR_BLOCK,
+      messageId: source === "MONITOR" ? this.CURRENT_MONITOR_BLOCK : this.CURRENT_ARCHIVE_BLOCK,
     });
   }
 
-  async getRetryBlock() {
+  async getRetryBlock(source: string) {
     return await this.nftBlockMonitorTaskModel.findOne({
+      messageId: source === "MONITOR" ? this.CURRENT_MONITOR_BLOCK : this.CURRENT_ARCHIVE_BLOCK,
       status: 'retry',
     });
   }
