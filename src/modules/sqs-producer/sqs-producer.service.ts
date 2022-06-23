@@ -16,7 +16,8 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
   public sqsProducer: Producer;
   private readonly logger = new Logger(SqsProducerService.name);
   nextBlock: number;
-  private source: string;
+  private readonly source: string;
+  private readonly queueLimit: number;
 
   constructor(
     private configService: ConfigService,
@@ -27,18 +28,20 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
     const accessKeyId = this.configService.get('aws.accessKeyId');
     const secretAccessKey = this.configService.get('aws.secretAccessKey');
     const source = this.configService.get('source');
+    const queueLimit = Number(this.configService.get('queueLimit'));
 
-    if (!region || !accessKeyId || !secretAccessKey || !source) {
+    if (!region || !accessKeyId || !secretAccessKey || !source || !queueLimit) {
       throw new Error(
         'Initialize AWS queue failed, please check required variables',
       );
     }
 
-    if (source !== "ARCHIVE" && source !== "MONITOR") {
+    if (source !== 'ARCHIVE' && source !== 'MONITOR') {
       throw new Error(`SOURCE has invalid value(${source})`);
     }
 
     this.source = source;
+    this.queueLimit = queueLimit;
 
     AWS.config.update({
       region: region,
@@ -67,38 +70,58 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
     const currentBlock = await this.ethereumService.getBlockNum();
     const blockDelay = parseInt(this.configService.get('blockDelay'));
 
-    for(let i = 0; i < 100; i++) {
-      const lastBlock = await this.nftBlockMonitorService.getLatestOne(this.source);
+    for (let i = 0; i < this.queueLimit; i++) {
+      const lastBlock = await this.nftBlockMonitorService.getLatestOne(
+        this.source,
+      );
 
       if (!lastBlock) {
-        this.nextBlock = parseInt(this.configService.get('default_start_block'));
-        this.logger.log(
-          `[Block Monitor Producer - ${this.source}] Havent started yet, will be start with the default block number: ${
-            this.nextBlock
-          }`,
+        this.nextBlock = parseInt(
+          this.configService.get('default_start_block'),
         );
-        await this.nftBlockMonitorService.insertLatestOne(this.nextBlock, this.source);
+        this.logger.log(
+          `[Block Monitor Producer - ${this.source}] Havent started yet, will be start with the default block number: ${this.nextBlock}`,
+        );
+        await this.nftBlockMonitorService.insertLatestOne(
+          this.nextBlock,
+          this.source,
+        );
       } else {
         // TODO: check if we should use BigNumber here
-        this.nextBlock = this.source === 'MONITOR' 
-        ? lastBlock.blockNum + 1
-        : lastBlock.blockNum - 1;
+        this.nextBlock =
+          this.source === 'MONITOR'
+            ? lastBlock.blockNum + 1
+            : lastBlock.blockNum - 1;
       }
 
-      if (this.source === "MONITOR" && this.nextBlock > currentBlock - blockDelay) {
+      if (
+        this.source === 'MONITOR' &&
+        this.nextBlock > currentBlock - blockDelay
+      ) {
         this.logger.log(
-          `[Block Monitor Producer - ${this.source}] Skip attempt to process block: ${
+          `[Block Monitor Producer - ${
+            this.source
+          }] Skip attempt to process block: ${
             this.nextBlock
-          } which exceeds current confirmed block: ${currentBlock - blockDelay}`,
+          } which exceeds current confirmed block: ${
+            currentBlock - blockDelay
+          }`,
         );
         return;
       }
 
-      if (this.source === "MONITOR" && this.nextBlock < this.configService.get('default_end_block')) {
+      if (
+        this.source === 'MONITOR' &&
+        this.nextBlock < this.configService.get('default_end_block')
+      ) {
         this.logger.log(
-          `[Block Monitor Producer - ${this.source}] Skip attempt to process block: ${
+          `[Block Monitor Producer - ${
+            this.source
+          }] Skip attempt to process block: ${
             this.nextBlock
-          } which exceeds the end block: ${this.configService.get('default_end_block')}`,
+          } which exceeds the end block: ${this.configService.get(
+            'default_end_block',
+          )}`,
         );
         return;
       }
@@ -114,13 +137,14 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
       };
       await this.sendMessage(message);
       this.logger.log(
-        `[Block Monitor Producer - ${this.source}] Successfully sent block num: ${
-          this.nextBlock
-        }`,
+        `[Block Monitor Producer - ${this.source}] Successfully sent block num: ${this.nextBlock}`,
       );
 
       // Increase the record
-      await this.nftBlockMonitorService.updateLatestOne(this.nextBlock, this.source);
+      await this.nftBlockMonitorService.updateLatestOne(
+        this.nextBlock,
+        this.source,
+      );
     }
   }
 
@@ -132,7 +156,9 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
   @Cron(CronExpression.EVERY_10_SECONDS)
   public async checkBlockRetryTask() {
     // get retry task
-    const retryBlock = await this.nftBlockMonitorService.getRetryBlock(this.source);
+    const retryBlock = await this.nftBlockMonitorService.getRetryBlock(
+      this.source,
+    );
     if (!retryBlock) {
       return;
     }
