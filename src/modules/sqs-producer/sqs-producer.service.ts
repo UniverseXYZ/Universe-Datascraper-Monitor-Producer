@@ -110,18 +110,16 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
         return;
       }
 
-      if (
-        this.source === 'MONITOR' &&
-        this.nextBlock < this.configService.get('default_end_block')
-      ) {
+      const endBlock = Number(this.configService.get('default_end_block'));
+
+      if ((this.source === 'MONITOR' && this.nextBlock < endBlock) ||
+        (this.source === "ARCHIVE" && this.nextBlock > endBlock)) {
         this.logger.log(
           `[Block Monitor Producer - ${
             this.source
           }] Skip attempt to process block: ${
             this.nextBlock
-          } which exceeds the end block: ${this.configService.get(
-            'default_end_block',
-          )}`,
+          } which exceeds the end block: ${endBlock}`,
         );
         return;
       }
