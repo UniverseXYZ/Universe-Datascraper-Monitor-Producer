@@ -63,9 +63,12 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
    * #3. save tasks to DB
    * #4. mark collection as processed
    */
-  // TODO: Upgrade this code in order to support backwards flow
   @Cron('*/10 * * * * *')
   public async checkBlock() {
+    if (!this.ethereumService.ether) {
+      this.logger.warn("[Block Monitor Producer - ${this.source}] Provider isn't available. Skipping this iteration.");
+      return;
+    }
     // Check if there is any unprocessed collection
     const currentBlock = await this.ethereumService.getBlockNum();
     const blockDelay = parseInt(this.configService.get('blockDelay'));
