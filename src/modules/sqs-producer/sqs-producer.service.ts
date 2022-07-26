@@ -66,7 +66,7 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
   @Cron('*/10 * * * * *')
   public async checkBlock() {
     if (!this.ethereumService.ether) {
-      this.logger.warn("[Block Monitor Producer - ${this.source}] Provider isn't available. Skipping this iteration.");
+      this.logger.warn(`[Block Monitor Producer - ${this.source}] Provider isn't available. Skipping this iteration.`);
       return;
     }
     // Check if there is any unprocessed collection
