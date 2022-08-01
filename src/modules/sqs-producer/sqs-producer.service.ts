@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EthereumService } from '../ethereum/ethereum.service';
 import { NFTBlockMonitorTaskService } from '../nft-block-monitor-task/nft-block-monitor-task.service';
+import { Utils } from 'src/utils';
 
 @Injectable()
 export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
@@ -18,6 +19,8 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
   nextBlock: number;
   private readonly source: string;
   private readonly queueLimit: number;
+  private isProcessing: boolean = false;
+  private skippingCounter: number = 0;
 
   constructor(
     private configService: ConfigService,
@@ -69,84 +72,118 @@ export class SqsProducerService implements OnModuleInit, SqsProducerHandler {
       this.logger.warn(`[Block Monitor Producer - ${this.source}] Provider isn't available. Skipping this iteration.`);
       return;
     }
-    // Check if there is any unprocessed collection
-    const currentBlock = await this.ethereumService.getBlockNum();
-    const blockDelay = parseInt(this.configService.get('blockDelay'));
 
-    for (let i = 0; i < this.queueLimit; i++) {
-      const lastBlock = await this.nftBlockMonitorService.getLatestOne(
-        this.source,
-      );
-
-      if (!lastBlock) {
-        this.nextBlock = parseInt(
-          this.configService.get('default_start_block'),
-        );
+    if (this.isProcessing) {
+      if (
+        this.skippingCounter <
+        Number(this.configService.get('skippingCounterLimit'))
+      ) {
+        this.skippingCounter++;
         this.logger.log(
-          `[Block Monitor Producer - ${this.source}] Havent started yet, will be start with the default block number: ${this.nextBlock}`,
+          `[Block Monitor Producer - ${this.source}] Task is in process, skipping (${this.skippingCounter}) ...`,
         );
-        await this.nftBlockMonitorService.insertLatestOne(
+      } else {
+        // when the counter reaches the limit, restart the pod.
+        this.logger.log(
+          `[Block Monitor Producer - ${this.source}] Task skipping counter reached its limit. The process is not responsive, restarting...`,
+        );
+        Utils.shutdown();
+      }
+
+      return;
+    }
+    this.isProcessing = true;
+    try {
+      // Check if there is any unprocessed collection
+      const currentBlock = await this.ethereumService.getBlockNum();
+      const blockDelay = parseInt(this.configService.get('blockDelay'));
+
+      for (let i = 0; i < this.queueLimit; i++) {
+        const lastBlock = await this.nftBlockMonitorService.getLatestOne(
+          this.source,
+        );
+
+        if (!lastBlock) {
+          this.nextBlock = parseInt(
+            this.configService.get('default_start_block'),
+          );
+          this.logger.log(
+            `[Block Monitor Producer - ${this.source}] Havent started yet, will be start with the default block number: ${this.nextBlock}`,
+          );
+          await this.nftBlockMonitorService.insertLatestOne(
+            this.nextBlock,
+            this.source,
+          );
+        } else {
+          // TODO: check if we should use BigNumber here
+          this.nextBlock =
+            this.source === 'MONITOR'
+              ? lastBlock.blockNum + 1
+              : lastBlock.blockNum - 1;
+        }
+
+        if (
+          this.source === 'MONITOR' &&
+          this.nextBlock > currentBlock - blockDelay
+        ) {
+          this.logger.log(
+            `[Block Monitor Producer - ${
+              this.source
+            }] Skip attempt to process block: ${
+              this.nextBlock
+            } which exceeds current confirmed block: ${
+              currentBlock - blockDelay
+            }`,
+          );
+          this.isProcessing = false;
+          this.skippingCounter = 0;
+          return;
+        }
+
+        const endBlock = Number(this.configService.get('default_end_block'));
+
+        if ((this.source === 'MONITOR' && this.nextBlock > endBlock) ||
+          (this.source === "ARCHIVE" && this.nextBlock < endBlock)) {
+          this.logger.log(
+            `[Block Monitor Producer - ${
+              this.source
+            }] Skip attempt to process block: ${
+              this.nextBlock
+            } which exceeds the end block: ${endBlock}`,
+          );
+
+          this.isProcessing = false;
+          this.skippingCounter = 0;
+          return;
+        }
+
+        // Prepare queue messages
+        const message: Message<QueueMessageBody> = {
+          id: this.nextBlock.toString(),
+          body: {
+            blockNum: this.nextBlock,
+          },
+          groupId: this.nextBlock.toString(),
+          deduplicationId: this.nextBlock.toString(),
+        };
+        await this.sendMessage(message);
+        this.logger.log(
+          `[Block Monitor Producer - ${this.source}] Successfully sent block num: ${this.nextBlock}`,
+        );
+
+        // Increase the record
+        await this.nftBlockMonitorService.updateLatestOne(
           this.nextBlock,
           this.source,
         );
-      } else {
-        // TODO: check if we should use BigNumber here
-        this.nextBlock =
-          this.source === 'MONITOR'
-            ? lastBlock.blockNum + 1
-            : lastBlock.blockNum - 1;
       }
-
-      if (
-        this.source === 'MONITOR' &&
-        this.nextBlock > currentBlock - blockDelay
-      ) {
-        this.logger.log(
-          `[Block Monitor Producer - ${
-            this.source
-          }] Skip attempt to process block: ${
-            this.nextBlock
-          } which exceeds current confirmed block: ${
-            currentBlock - blockDelay
-          }`,
-        );
-        return;
-      }
-
-      const endBlock = Number(this.configService.get('default_end_block'));
-
-      if ((this.source === 'MONITOR' && this.nextBlock > endBlock) ||
-        (this.source === "ARCHIVE" && this.nextBlock < endBlock)) {
-        this.logger.log(
-          `[Block Monitor Producer - ${
-            this.source
-          }] Skip attempt to process block: ${
-            this.nextBlock
-          } which exceeds the end block: ${endBlock}`,
-        );
-        return;
-      }
-
-      // Prepare queue messages
-      const message: Message<QueueMessageBody> = {
-        id: this.nextBlock.toString(),
-        body: {
-          blockNum: this.nextBlock,
-        },
-        groupId: this.nextBlock.toString(),
-        deduplicationId: this.nextBlock.toString(),
-      };
-      await this.sendMessage(message);
-      this.logger.log(
-        `[Block Monitor Producer - ${this.source}] Successfully sent block num: ${this.nextBlock}`,
-      );
-
-      // Increase the record
-      await this.nftBlockMonitorService.updateLatestOne(
-        this.nextBlock,
-        this.source,
-      );
+    } catch(err) {
+      this.logger.error("Unexpected error during processing:");
+      this.logger.error(err);
     }
+
+    this.isProcessing = false;
+    this.skippingCounter = 0;
   }
 
   /**

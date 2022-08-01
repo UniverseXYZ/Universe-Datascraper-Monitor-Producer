@@ -26,4 +26,5 @@ export default () => ({
   default_end_block: process.env.DEFAULT_END_BLOCK,
   source: process.env.SOURCE,
   queueLimit: process.env.QUEUE_LIMIT,
+  skippingCounterLimit: process.env.SKIPPING_COUNTER_LIMIT,
 });
